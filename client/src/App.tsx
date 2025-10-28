@@ -1,4 +1,4 @@
-﻿import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import FrogGame from "./game/FrogGame";
 
 type Stage = "tadpole" | "frog";
@@ -14,8 +14,25 @@ const stageDescription: Record<Stage, string> = {
 };
 
 function App() {
+  const [nickname, setNickname] = useState<string>("");
   const [stage, setStage] = useState<Stage>("tadpole");
   const [attackHits, setAttackHits] = useState(0);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("frog_nickname");
+    if (saved) setNickname(saved);
+  }, []);
+
+  const handleLogin = useCallback((e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const data = new FormData(form);
+    const name = String(data.get("nickname") || "").trim();
+    if (name.length > 0) {
+      setNickname(name);
+      localStorage.setItem("frog_nickname", name);
+    }
+  }, []);
 
   const handleStageAdvance = useCallback(() => {
     setStage((prev) => (prev === "tadpole" ? "frog" : "tadpole"));
@@ -24,6 +41,21 @@ function App() {
   const handleHit = useCallback(() => {
     setAttackHits((value) => value + 1);
   }, []);
+
+  if (!nickname) {
+    return (
+      <main>
+        <section className="hud">
+          <h1>Enter Nickname</h1>
+          <p className="instructions">Pick a name to show above your frog.</p>
+          <form onSubmit={handleLogin} className="control-panel">
+            <input type="text" name="nickname" placeholder="Nickname" maxLength={16} required />
+            <button type="submit">Start</button>
+          </form>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main>
@@ -41,7 +73,7 @@ function App() {
       </section>
 
       <div className="game-container">
-        <FrogGame stage={stage} onHit={handleHit} />
+        <FrogGame stage={stage} onHit={handleHit} nickname={nickname} />
         <div className="game-overlay">
           <div className="status-card">
             <strong>Current Stage</strong>
@@ -53,6 +85,11 @@ function App() {
             <span>{attackHits}</span>
             <div>Press Space to attack with your tongue</div>
           </div>
+          <div className="status-card">
+            <strong>Nickname</strong>
+            <span>{nickname}</span>
+            <div>Shown above your frog</div>
+          </div>
         </div>
       </div>
     </main>
@@ -60,3 +97,4 @@ function App() {
 }
 
 export default App;
+

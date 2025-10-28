@@ -40,6 +40,20 @@ Frog Game is a browser-based prototype for a frog-raising .io experience. The pr
 - npm run lint - run ESLint on the client source
 - npm test - execute the Vitest unit test suite
 
+## Local vs Server modes
+
+- Local development
+  - `npm run dev` launches the client (Vite) and server together.
+  - The client connects to Socket.IO at `http://localhost:3000` by default.
+
+- Server/production
+  - Build client: `npm run build` (outputs `dist/`).
+  - Start server: `npm run server` (serves `dist/` and Socket.IO on the same origin).
+  - If hosting client and server on different origins, set:
+    - Server: `CLIENT_ORIGIN=https://<client-domain>`
+    - Client (Vite): `VITE_SOCKET_URL=https://<server-domain>`
+  - See `scripts/.env.sample` for examples.
+
 ## Gameplay Notes
 - Stage 1: Tadpole - movement restricted to the water area and tuned for slower acceleration
 - Stage 2: Frog - land and water movement unlocked; space-bar triggers a tongue lash attack

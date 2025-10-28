@@ -1,12 +1,15 @@
 import { useEffect, useRef } from "react";
-import { Application, Container, Graphics } from "pixi.js";
+import { Application, Container, Graphics, Text } from "pixi.js";
 import { Bodies, Body, Engine, Runner, Vector, World } from "matter-js";
+import { io, Socket } from "socket.io-client";
+import { getSocketUrl } from "../config/network";
 
 type Stage = "tadpole" | "frog";
 
 type FrogGameProps = {
   stage: Stage;
   onHit: () => void;
+  nickname: string;
 };
 
 type InputState = {
@@ -35,7 +38,7 @@ const createInputState = (): InputState => ({
 const tadpoleSpeed = 0.0028;
 const frogSpeed = 0.0042;
 
-const FrogGame = ({ stage, onHit }: FrogGameProps): JSX.Element => {
+const FrogGame = ({ stage, onHit, nickname }: FrogGameProps): JSX.Element => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const appRef = useRef<Application | null>(null);
   const engineRef = useRef<Engine | null>(null);
@@ -45,6 +48,7 @@ const FrogGame = ({ stage, onHit }: FrogGameProps): JSX.Element => {
   const tongueSpriteRef = useRef<Graphics | null>(null);
   const inputsRef = useRef<InputState>(createInputState());
   const stageRef = useRef<Stage>(stage);
+  const nicknameRef = useRef<string>(nickname);
   const headingRef = useRef<Vector>(Vector.create(1, 0));
   const attackStateRef = useRef({
     isAttacking: false,
@@ -57,8 +61,14 @@ const FrogGame = ({ stage, onHit }: FrogGameProps): JSX.Element => {
     cooldownUntil: 0
   });
   const onHitRef = useRef(onHit);
+  const socketRef = useRef<Socket | null>(null);
+  const selfIdRef = useRef<string | null>(null);
+  const remotesRef = useRef<Map<string, { body: Graphics; label: Text }>>(new Map());
+  const lastSentRef = useRef<number>(0);
+  const selfLabelRef = useRef<Text | null>(null);
 
   stageRef.current = stage;
+  nicknameRef.current = nickname;
   onHitRef.current = onHit;
 
   useEffect(() => {
@@ -145,6 +155,15 @@ const FrogGame = ({ stage, onHit }: FrogGameProps): JSX.Element => {
     frogSpriteRef.current = frogSprite;
     stageContainer.addChild(frogSprite);
 
+    const selfLabel = new Text(nicknameRef.current || "", {
+      fontSize: 14,
+      fill: 0xffffff,
+      fontFamily: "Arial"
+    });
+    selfLabel.anchor?.set?.(0.5, 1);
+    selfLabelRef.current = selfLabel;
+    stageContainer.addChild(selfLabel);
+
     const tongue = new Graphics();
     tongue.visible = false;
     tongueSpriteRef.current = tongue;
@@ -169,6 +188,45 @@ const FrogGame = ({ stage, onHit }: FrogGameProps): JSX.Element => {
       targetHitStateRef.current.positionIndex = index % targetPositions.length;
     };
     resetTarget(0);
+
+    // Multiplayer helpers
+    const addRemote = (
+      id: string,
+      x: number,
+      y: number,
+      color: number,
+      remoteNickname: string
+    ) => {
+      if (remotesRef.current.has(id)) return;
+      const body = new Graphics();
+      body.beginFill(color);
+      body.drawCircle(0, 0, 14);
+      body.endFill();
+      body.position.set(x, y);
+      const label = new Text(remoteNickname || "", { fontSize: 14, fill: 0xffffff, fontFamily: "Arial" });
+      label.anchor?.set?.(0.5, 1);
+      label.position.set(x, y - 24);
+      remotesRef.current.set(id, { body, label });
+      stageContainer.addChild(body);
+      stageContainer.addChild(label);
+    };
+
+    const updateRemote = (id: string, x: number, y: number) => {
+      const entry = remotesRef.current.get(id);
+      if (!entry) return;
+      entry.body.position.set(x, y);
+      entry.label.position.set(x, y - 24);
+    };
+
+    const removeRemote = (id: string) => {
+      const entry = remotesRef.current.get(id);
+      if (!entry) return;
+      stageContainer.removeChild(entry.body);
+      stageContainer.removeChild(entry.label);
+      entry.body.destroy(true);
+      entry.label.destroy(true);
+      remotesRef.current.delete(id);
+    };
 
     Engine.clear(engine);
     World.add(engine.world, worldBounds);
@@ -227,6 +285,50 @@ const FrogGame = ({ stage, onHit }: FrogGameProps): JSX.Element => {
 
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
+
+    // Socket.IO wiring via env-aware helper
+    const socket = io(getSocketUrl(), { transports: ["websocket"], autoConnect: true });
+    socketRef.current = socket;
+
+    socket.on("connect", () => {
+      selfIdRef.current = socket.id ?? null;
+      const fb = frogBodyRef.current;
+      socket.emit("player:join", {
+        x: fb?.position.x ?? 240,
+        y: fb?.position.y ?? 320,
+        stage: stageRef.current,
+        nickname: nicknameRef.current
+      });
+    });
+
+    socket.on(
+      "players:sync",
+      (snapshot: Record<string, { x: number; y: number; color: number; nickname: string }>) => {
+        const selfId = selfIdRef.current;
+        for (const id of Object.keys(snapshot)) {
+          if (id === selfId) continue;
+          const s = snapshot[id];
+          addRemote(id, s.x, s.y, s.color, s.nickname);
+        }
+      }
+    );
+
+    socket.on(
+      "player:joined",
+      (payload: { id: string; x: number; y: number; color: number; nickname: string }) => {
+        if (payload.id === selfIdRef.current) return;
+        addRemote(payload.id, payload.x, payload.y, payload.color, payload.nickname);
+      }
+    );
+
+    socket.on("player:updated", (payload: { id: string; x: number; y: number }) => {
+      if (payload.id === selfIdRef.current) return;
+      updateRemote(payload.id, payload.x, payload.y);
+    });
+
+    socket.on("player:left", (payload: { id: string }) => {
+      removeRemote(payload.id);
+    });
 
     const updateHeading = (vx: number, vy: number) => {
       if (Math.abs(vx) < 0.05 && Math.abs(vy) < 0.05) {
@@ -354,10 +456,24 @@ const FrogGame = ({ stage, onHit }: FrogGameProps): JSX.Element => {
       }
 
       frogSprite.position.set(frogBody.position.x, frogBody.position.y);
+      // update self label
+      if (selfLabelRef.current) {
+        selfLabelRef.current.position.set(frogBody.position.x, frogBody.position.y - 24);
+      }
       frogSprite.rotation = Math.atan2(frogBody.velocity.y, frogBody.velocity.x) * 0.25;
 
       const now = performance.now();
       handleAttack(now);
+
+      // Throttle network updates to ~20Hz
+      if (socketRef.current && now - lastSentRef.current > 50) {
+        socketRef.current.emit("player:update", {
+          x: frogBody.position.x,
+          y: frogBody.position.y,
+          stage: stageRef.current
+        });
+        lastSentRef.current = now;
+      }
 
       const targetGraphic = targetRef.current;
       if (targetGraphic && stageRef.current === "tadpole") {
@@ -382,10 +498,29 @@ const FrogGame = ({ stage, onHit }: FrogGameProps): JSX.Element => {
       appRef.current = null;
       engineRef.current = null;
       runnerRef.current = null;
+
+      // Cleanup socket and remote sprites
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+      for (const [id, entry] of remotesRef.current.entries()) {
+        stageContainer.removeChild(entry.body);
+        stageContainer.removeChild(entry.label);
+        entry.body.destroy(true);
+        entry.label.destroy(true);
+        remotesRef.current.delete(id);
+      }
+      if (selfLabelRef.current) {
+        stageContainer.removeChild(selfLabelRef.current);
+        selfLabelRef.current.destroy(true);
+        selfLabelRef.current = null;
+      }
     };
-  }, []);
+  }, [nickname]);
 
   return <div ref={containerRef} />;
 };
 
 export default FrogGame;
+
