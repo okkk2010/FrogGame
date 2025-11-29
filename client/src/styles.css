@@ -7,130 +7,121 @@
 body {
   margin: 0;
   min-height: 100vh;
+  background: #0f172a;
 }
 
 #root {
-  display: flex;
   min-height: 100vh;
-  justify-content: center;
-  align-items: center;
 }
 
-main {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1.5rem;
-  width: 100%;
-  padding: 2rem 1rem 3rem;
-  box-sizing: border-box;
-}
-
-.control-panel {
-  display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-
-.control-panel button {
-  border: none;
-  padding: 0.75rem 1.5rem;
-  background: linear-gradient(135deg, #22d3ee, #6366f1);
-  color: #0f172a;
-  font-weight: 600;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.control-panel button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 20px rgba(99, 102, 241, 0.35);
-}
-
-.control-panel button:disabled {
-  background: #1e293b;
-  color: #94a3b8;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-
-.hud {
-  max-width: 960px;
-  width: 100%;
-  background: rgba(15, 23, 42, 0.75);
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  border-radius: 18px;
-  padding: 1.5rem;
-  box-shadow: 0 25px 50px -12px rgba(30, 64, 175, 0.65);
-  backdrop-filter: blur(12px);
-}
-
-.hud h1 {
-  margin: 0 0 0.75rem;
-  font-size: 1.75rem;
-}
-
-.instructions {
-  font-size: 0.95rem;
-  line-height: 1.6;
-  color: #cbd5f5;
-}
-
-.game-container {
+.game-root {
   position: relative;
-  width: 960px;
-  max-width: 100%;
-  border-radius: 24px;
+  width: 100vw;
+  height: 100vh;
   overflow: hidden;
-  box-shadow: 0 35px 80px -25px rgba(96, 165, 250, 0.65);
 }
 
-.game-overlay {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  padding: 1rem;
-  color: rgba(15, 23, 42, 0.85);
-  font-weight: 600;
+.hud-hearts {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  font-size: 24px;
+  letter-spacing: 6px;
+  color: #f87171;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
 }
 
-.status-card {
-  padding: 0.75rem 1rem;
+.hud-score {
+  position: fixed;
+  right: 16px;
+  top: 16px;
+  min-width: 140px;
+  padding: 10px 12px;
   border-radius: 12px;
-  background: rgba(148, 163, 184, 0.9);
-  color: #0f172a;
-  min-width: 160px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 
-.status-card strong {
-  display: block;
-  font-size: 0.75rem;
+.score-title {
+  font-size: 12px;
   letter-spacing: 0.08em;
+  color: #94a3b8;
   text-transform: uppercase;
-  color: #0f172a;
 }
 
-.status-card span {
-  font-size: 1.15rem;
+.score-value {
+  font-size: 28px;
+  font-weight: 800;
+  color: #fbbf24;
+  line-height: 1.2;
+}
+
+.hud-leaderboard {
+  position: fixed;
+  left: 16px;
+  top: 16px;
+  min-width: 200px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.lb-title {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.lb-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  margin-bottom: 4px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.lb-row.first {
+  border: 1px solid #fbbf24;
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.5);
+}
+
+.lb-row.second {
+  border: 1px solid #cbd5e1;
+  box-shadow: 0 0 12px rgba(203, 213, 225, 0.4);
+}
+
+.lb-row.third {
+  border: 1px solid #f97316;
+  box-shadow: 0 0 12px rgba(249, 115, 22, 0.4);
+}
+
+.lb-row.self {
+  background: rgba(34, 197, 235, 0.15);
+}
+
+.lb-rank {
   font-weight: 700;
+  color: #fbbf24;
 }
 
-@media (max-width: 1024px) {
-  main {
-    padding: 1.25rem 0.75rem 2rem;
-  }
+.lb-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-  .hud {
-    padding: 1.25rem;
-  }
-
-  .game-overlay {
-    flex-direction: column;
-    gap: 0.75rem;
-  }
+.lb-score {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
 }

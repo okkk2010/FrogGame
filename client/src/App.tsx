@@ -15,32 +15,28 @@ const stageDescription: Record<Stage, string> = {
 
 function App() {
   const [nickname, setNickname] = useState<string>("");
+  const [nicknameInput, setNicknameInput] = useState<string>("");
   const [stage, setStage] = useState<Stage>("tadpole");
-  const [attackHits, setAttackHits] = useState(0);
+  const [health, setHealth] = useState<number>(5);
+  const [scores, setScores] = useState<{ id: string; nickname: string; score: number; isSelf: boolean }[]>([]);
 
   useEffect(() => {
     const saved = localStorage.getItem("frog_nickname");
-    if (saved) setNickname(saved);
+    if (saved) setNicknameInput(saved);
   }, []);
 
   const handleLogin = useCallback((e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const form = e.currentTarget;
-    const data = new FormData(form);
-    const name = String(data.get("nickname") || "").trim();
+    const formData = new FormData(e.currentTarget);
+    const name = String(formData.get("nickname") || nicknameInput || "").trim();
     if (name.length > 0) {
       setNickname(name);
+       setNicknameInput(name);
       localStorage.setItem("frog_nickname", name);
     }
-  }, []);
+  }, [nicknameInput]);
 
-  const handleStageAdvance = useCallback(() => {
-    setStage((prev) => (prev === "tadpole" ? "frog" : "tadpole"));
-  }, []);
-
-  const handleHit = useCallback(() => {
-    setAttackHits((value) => value + 1);
-  }, []);
+  const handleHit = useCallback(() => {}, []);
 
   if (!nickname) {
     return (
@@ -49,7 +45,15 @@ function App() {
           <h1>Enter Nickname</h1>
           <p className="instructions">Pick a name to show above your frog.</p>
           <form onSubmit={handleLogin} className="control-panel">
-            <input type="text" name="nickname" placeholder="Nickname" maxLength={16} required />
+            <input
+              type="text"
+              name="nickname"
+              placeholder="Nickname"
+              maxLength={16}
+              value={nicknameInput}
+              onChange={(e) => setNicknameInput(e.target.value)}
+              required
+            />
             <button type="submit">Start</button>
           </form>
         </section>
@@ -58,41 +62,38 @@ function App() {
   }
 
   return (
-    <main>
-      <section className="hud">
-        <h1>Frog Controls Playtest Build</h1>
-        <p className="instructions">
-          Use WASD to move and press Space to flick your tongue while in frog form. Use the button below to
-          switch life stages. Each hit relocates the target and increments the counter.
-        </p>
-        <div className="control-panel">
-          <button type="button" onClick={handleStageAdvance}>
-            {stage === "tadpole" ? "Advance to Stage 2" : "Return to Stage 1"}
-          </button>
-        </div>
-      </section>
-
-      <div className="game-container">
-        <FrogGame stage={stage} onHit={handleHit} nickname={nickname} />
-        <div className="game-overlay">
-          <div className="status-card">
-            <strong>Current Stage</strong>
-            <span>{stageLabel[stage]}</span>
-            <div>{stageDescription[stage]}</div>
-          </div>
-          <div className="status-card">
-            <strong>Successful Hits</strong>
-            <span>{attackHits}</span>
-            <div>Press Space to attack with your tongue</div>
-          </div>
-          <div className="status-card">
-            <strong>Nickname</strong>
-            <span>{nickname}</span>
-            <div>Shown above your frog</div>
-          </div>
-        </div>
+    <div className="game-root">
+      <FrogGame
+        stage={stage}
+        onHit={handleHit}
+        nickname={nickname}
+        onStageChange={setStage}
+        onHealthChange={setHealth}
+        onScoresChange={setScores}
+      />
+      <div className="hud-hearts" aria-label="health">
+        {"♥".repeat(Math.max(0, Math.min(health, 5))).padEnd(5, "♡")}
       </div>
-    </main>
+      <div className="hud-score" aria-label="score">
+        <div className="score-title">My Score</div>
+        <div className="score-value">{scores.find((s) => s.isSelf)?.score ?? 0}</div>
+      </div>
+      <div className="hud-leaderboard" aria-label="leaderboard">
+        <div className="lb-title">Top 5</div>
+        {scores.slice(0, 5).map((entry, index) => (
+          <div
+            key={entry.id}
+            className={`lb-row ${index === 0 ? "first" : index === 1 ? "second" : index === 2 ? "third" : ""} ${
+              entry.isSelf ? "self" : ""
+            }`}
+          >
+            <span className="lb-rank">#{index + 1}</span>
+            <span className="lb-name">{entry.nickname}</span>
+            <span className="lb-score">{entry.score}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

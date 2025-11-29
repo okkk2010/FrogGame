@@ -1,8 +1,9 @@
 import express from "express";
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Server as IOServer } from "socket.io";
+import { WebSocketServer, WebSocket } from "ws";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -12,64 +13,195 @@ const port = Number(process.env.PORT ?? 3000);
 const distDir = resolve(__dirname, "../dist");
 const httpServer = createServer(app);
 
-// Socket.IO server
+// WebSocket server
 const isProd = process.env.NODE_ENV === "production";
 const clientOrigin = process.env.CLIENT_ORIGIN;
-const io = new IOServer(
-  httpServer,
-  clientOrigin || !isProd
-    ? {
-        cors: {
-          // In dev: allow any origin. In prod: use CLIENT_ORIGIN if provided.
-          origin: clientOrigin || true
-        }
-      }
-    : undefined
-);
+const wss = new WebSocketServer({ server: httpServer });
 
 // In-memory player state
-const players = new Map(); // id -> { x, y, stage, color, nickname }
+const players = new Map(); // id -> { x, y, stage, color, nickname, hp, score }
 const palette = [0xff6b6b, 0x4ecdc4, 0xffe66d, 0x5dade2, 0xa569bd, 0xf5b7b1, 0x48c9b0, 0xf8c471];
 let colorIndex = 0;
 
-io.on("connection", (socket) => {
-  // Send current players to the newly connected client
+const broadcast = (message, excludeId) => {
+  const payload = JSON.stringify(message);
+  for (const client of wss.clients) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    if (excludeId && client.clientId === excludeId) continue;
+    client.send(payload);
+  }
+};
+
+const toSnapshot = () => {
   const snapshot = {};
   for (const [id, state] of players.entries()) {
     snapshot[id] = state;
   }
-  socket.emit("players:sync", snapshot);
+  return snapshot;
+};
 
-  socket.on("player:join", (payload) => {
-    const color = palette[colorIndex++ % palette.length];
-    const state = {
-      x: Number(payload?.x ?? 240),
-      y: Number(payload?.y ?? 320),
-      stage: payload?.stage === "frog" ? "frog" : "tadpole",
-      color,
-      nickname: String(payload?.nickname || "Player")
-    };
-    players.set(socket.id, state);
-    socket.broadcast.emit("player:joined", { id: socket.id, ...state });
+wss.on("connection", (socket, request) => {
+  if (clientOrigin && isProd && request.headers.origin && request.headers.origin !== clientOrigin) {
+    socket.close(1008, "origin not allowed");
+    return;
+  }
+
+  const clientId = randomUUID();
+  socket.clientId = clientId;
+
+  socket.send(
+    JSON.stringify({
+      type: "players:sync",
+      payload: { selfId: clientId, players: toSnapshot() }
+    })
+  );
+
+  socket.on("message", (data) => {
+    let parsed;
+    try {
+      parsed = JSON.parse(data.toString());
+    } catch (error) {
+      console.warn("Failed to parse message", error);
+      return;
+    }
+
+    switch (parsed?.type) {
+      case "player:join": {
+        const color = palette[colorIndex++ % palette.length];
+        const state = {
+          x: Number(parsed.payload?.x ?? 240),
+          y: Number(parsed.payload?.y ?? 320),
+          stage: parsed.payload?.stage === "frog" ? "frog" : "tadpole",
+          color,
+          hp: 5,
+          score: 0,
+          nickname: String(parsed.payload?.nickname || "Player")
+        };
+        players.set(clientId, state);
+        // Send own state back to the client
+        socket.send(
+          JSON.stringify({
+            type: "player:updated",
+            payload: { id: clientId, x: state.x, y: state.y, stage: state.stage, hp: state.hp, score: state.score, color: state.color }
+          })
+        );
+        broadcast({ type: "player:joined", payload: { id: clientId, ...state } }, clientId);
+        break;
+      }
+      case "food:eat": {
+        const player = players.get(clientId);
+        if (!player) return;
+        const nextScore = (player.score ?? 0) + 10;
+        const nextStage = nextScore >= 50 ? "frog" : player.stage;
+        const updated = { ...player, score: nextScore, stage: nextStage };
+        players.set(clientId, updated);
+        broadcast({
+          type: "player:updated",
+          payload: {
+            id: clientId,
+            x: updated.x,
+            y: updated.y,
+            stage: updated.stage,
+            hp: updated.hp ?? 5,
+            score: updated.score ?? 0,
+            color: updated.color
+          }
+        });
+        break;
+      }
+      case "player:update": {
+        const prev = players.get(clientId);
+        if (!prev) return;
+        const next = {
+          ...prev,
+          x: typeof parsed.payload?.x === "number" ? parsed.payload.x : prev.x,
+          y: typeof parsed.payload?.y === "number" ? parsed.payload.y : prev.y,
+          stage:
+            parsed.payload?.stage === "frog" ? "frog" : parsed.payload?.stage === "tadpole" ? "tadpole" : prev.stage
+        };
+        players.set(clientId, next);
+        broadcast(
+          {
+            type: "player:updated",
+            payload: {
+              id: clientId,
+              x: next.x,
+              y: next.y,
+              stage: next.stage,
+              hp: next.hp ?? 5,
+              score: next.score ?? 0,
+              color: next.color
+            }
+          },
+          clientId
+        );
+        break;
+      }
+      case "player:hit": {
+        const targetId = parsed.payload?.targetId;
+        if (!targetId || typeof targetId !== "string") return;
+        const target = players.get(targetId);
+        if (!target) return;
+        const prevHp = target.hp ?? 5;
+        const nextHp = Math.max(0, prevHp - 1);
+        const died = nextHp === 0 && prevHp > 0;
+        const nextStage = died ? "tadpole" : target.stage;
+        const updated = {
+          ...target,
+          hp: died ? 5 : nextHp,
+          stage: nextStage,
+          score: died ? 0 : target.score ?? 0
+        };
+        players.set(targetId, updated);
+        broadcast({
+          type: "player:updated",
+          payload: {
+            id: targetId,
+            x: updated.x,
+            y: updated.y,
+            stage: updated.stage,
+            hp: updated.hp,
+            score: updated.score ?? 0,
+            color: updated.color
+          }
+        });
+
+        // Increment attacker score only on kill
+        if (died) {
+          const attacker = players.get(clientId);
+          if (attacker) {
+            const nextScore = (attacker.score ?? 0) + 50;
+            const updatedAttacker = { ...attacker, score: nextScore };
+            players.set(clientId, updatedAttacker);
+            broadcast({
+              type: "player:updated",
+              payload: {
+                id: clientId,
+                x: updatedAttacker.x,
+                y: updatedAttacker.y,
+                stage: updatedAttacker.stage,
+                hp: updatedAttacker.hp ?? 5,
+                score: updatedAttacker.score ?? 0,
+                color: updatedAttacker.color
+              }
+            });
+          }
+        }
+        break;
+      }
+      case "player:attack": {
+        broadcast({ type: "player:attack", payload: { id: clientId, heading: parsed.payload?.heading } }, clientId);
+        break;
+      }
+      default:
+        break;
+    }
   });
 
-  socket.on("player:update", (payload) => {
-    const prev = players.get(socket.id);
-    if (!prev) return;
-    const next = {
-      ...prev,
-      x: typeof payload?.x === "number" ? payload.x : prev.x,
-      y: typeof payload?.y === "number" ? payload.y : prev.y,
-      stage: payload?.stage === "frog" ? "frog" : payload?.stage === "tadpole" ? "tadpole" : prev.stage
-    };
-    players.set(socket.id, next);
-    socket.broadcast.volatile.emit("player:updated", { id: socket.id, x: next.x, y: next.y, stage: next.stage });
-  });
-
-  socket.on("disconnect", () => {
-    if (players.has(socket.id)) {
-      players.delete(socket.id);
-      socket.broadcast.emit("player:left", { id: socket.id });
+  socket.on("close", () => {
+    if (players.has(clientId)) {
+      players.delete(clientId);
+      broadcast({ type: "player:left", payload: { id: clientId } }, clientId);
     }
   });
 });
