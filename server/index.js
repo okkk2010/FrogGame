@@ -3,7 +3,12 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import cors from "cors";
+import mysql from "mysql2/promise";
+import dotenv from "dotenv";
 import { WebSocketServer, WebSocket } from "ws";
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -17,11 +22,81 @@ const httpServer = createServer(app);
 const isProd = process.env.NODE_ENV === "production";
 const clientOrigin = process.env.CLIENT_ORIGIN;
 const wss = new WebSocketServer({ server: httpServer });
+const corsOptions = clientOrigin ? { origin: clientOrigin } : { origin: true };
+app.use(cors(corsOptions));
 
 // In-memory player state
 const players = new Map(); // id -> { x, y, stage, color, nickname, hp, score }
 const palette = [0xff6b6b, 0x4ecdc4, 0xffe66d, 0x5dade2, 0xa569bd, 0xf5b7b1, 0x48c9b0, 0xf8c471];
 let colorIndex = 0;
+
+// MySQL setup (optional: only if env vars provided)
+const dbConfig =
+  process.env.DB_HOST && process.env.DB_USER && process.env.DB_NAME
+    ? {
+        host: process.env.DB_HOST,
+        user: process.env.DB_USER,
+        password: process.env.DB_PASSWORD || "",
+        database: process.env.DB_NAME,
+        port: Number(process.env.DB_PORT || 3306)
+      }
+    : null;
+
+let pool = null;
+
+const initDb = async () => {
+  if (!dbConfig) {
+    console.log("MySQL config not provided; score persistence disabled");
+    return;
+  }
+    
+  pool = mysql.createPool({ ...dbConfig, waitForConnections: true, connectionLimit: 5, namedPlaceholders: true });
+  await pool.execute(
+    `CREATE TABLE IF NOT EXISTS scores (
+      nickname VARCHAR(64) PRIMARY KEY,
+      best_score INT NOT NULL DEFAULT 0
+    );`
+  );
+  console.log("MySQL connected; score persistence enabled");
+};
+
+const recordHighScore = async (nickname, score) => {
+  if (!pool || typeof score !== "number" || Number.isNaN(score)) return;
+  const safeNickname = String(nickname || "Player").slice(0, 64);
+  try {
+    await pool.execute(
+      "INSERT INTO scores (nickname, best_score) VALUES (?, ?) ON DUPLICATE KEY UPDATE best_score = GREATEST(best_score, VALUES(best_score))",
+      [safeNickname, score]
+    );
+  } catch (error) {
+    console.warn("Failed to record score", error);
+  }
+};
+
+initDb().catch((error) => {
+  console.warn("MySQL init failed; score persistence disabled", error);
+});
+
+// High score API
+app.get("/api/highscores", async (req, res) => {
+  if (!pool) {
+    res.json([]);
+    return;
+  }
+  const rawLimit = Number(req.query.limit);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(50, Math.floor(rawLimit)) : 10;
+  try {
+    // Inline the limit after sanitization to avoid binding issues with LIMIT placeholders
+    const [rows] = await pool.query(
+      `SELECT nickname, best_score AS score FROM scores ORDER BY best_score DESC LIMIT ${limit}`
+    );
+    console.log("Fetched highscores", rows);
+    res.json(rows);
+  } catch (error) {
+    console.warn("Failed to fetch highscores", error);
+    res.status(500).json({ error: "failed to fetch highscores" });
+  }
+});
 
 const broadcast = (message, excludeId) => {
   const payload = JSON.stringify(message);
@@ -146,6 +221,7 @@ wss.on("connection", (socket, request) => {
         const nextHp = Math.max(0, prevHp - 1);
         const died = nextHp === 0 && prevHp > 0;
         const nextStage = died ? "tadpole" : target.stage;
+        const deathScore = target.score ?? 0;
         const updated = {
           ...target,
           hp: died ? 5 : nextHp,
@@ -168,6 +244,7 @@ wss.on("connection", (socket, request) => {
 
         // Increment attacker score only on kill
         if (died) {
+          recordHighScore(target.nickname, deathScore);
           const attacker = players.get(clientId);
           if (attacker) {
             const nextScore = (attacker.score ?? 0) + 50;
