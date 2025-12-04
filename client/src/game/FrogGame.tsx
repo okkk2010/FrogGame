@@ -213,6 +213,7 @@ const FrogGame = ({
     LILYPADS.forEach((pad) => createLilypad(pad.x, pad.y, pad.r));
 
     const drawStageSprite = (sprite: Graphics, currentStage: Stage, baseColor: number) => {
+      sprite.removeChildren?.();
       sprite.clear();
       if (currentStage === "frog") {
         sprite.beginFill(baseColor);
@@ -236,7 +237,7 @@ const FrogGame = ({
         sprite.addChild(eyeLeft);
         sprite.addChild(eyeRight);
       } else {
-        sprite.beginFill(0x56cfe1);
+        sprite.beginFill(baseColor);
         sprite.drawEllipse(0, 0, 20, 12);
         sprite.endFill();
         sprite.beginFill(0x3ba6c0);
@@ -292,24 +293,8 @@ const FrogGame = ({
 
     // Multiplayer helpers
     const drawRemoteSprite = (g: Graphics, currentStage: Stage, color: number) => {
-      g.clear();
-      if (currentStage === "frog") {
-        g.beginFill(color);
-        g.drawCircle(0, 0, 14);
-        g.endFill();
-        g.lineStyle(2, 0xffffff, 0.6);
-        g.moveTo(-6, -6);
-        g.lineTo(-3, -9);
-        g.moveTo(6, -6);
-        g.lineTo(3, -9);
-      } else {
-        g.beginFill(0x3ba6c0);
-        g.drawEllipse(0, 0, 16, 10);
-        g.endFill();
-        g.beginFill(color);
-        g.drawEllipse(-12, 3, 8, 5);
-        g.endFill();
-      }
+      drawStageSprite(g, currentStage, color);
+      g.scale.set(0.85);
     };
 
     const addRemote = (id: string, x: number, y: number, color: number, remoteNickname: string, hp: number, stageValue: Stage) => {
