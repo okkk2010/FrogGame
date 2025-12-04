@@ -226,3 +226,77 @@ body {
   text-align: center;
   color: #cbd5e1;
 }
+
+.modal-subtitle {
+  color: #cbd5e1;
+  margin-top: -4px;
+  font-size: 14px;
+}
+
+.death-modal {
+  width: min(520px, 92vw);
+}
+
+.death-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.death-stat {
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.death-label {
+  font-size: 12px;
+  color: #94a3b8;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.death-value {
+  font-size: 24px;
+  font-weight: 800;
+  color: #fbbf24;
+}
+
+.death-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.primary-button,
+.ghost-button {
+  padding: 10px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 700;
+  border: 1px solid transparent;
+  color: #e2e8f0;
+}
+
+.primary-button {
+  background: linear-gradient(135deg, #f97316, #fbbf24);
+  color: #0f172a;
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: 0 8px 24px rgba(249, 115, 22, 0.35);
+}
+
+.primary-button:hover {
+  filter: brightness(1.05);
+}
+
+.ghost-button {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.ghost-button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}

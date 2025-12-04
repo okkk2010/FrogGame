@@ -13,6 +13,10 @@ function App() {
   const [isHighscoreOpen, setHighscoreOpen] = useState(false);
   const [isHighscoreLoading, setHighscoreLoading] = useState(false);
   const [highscoreError, setHighscoreError] = useState<string | null>(null);
+  const [deathInfo, setDeathInfo] = useState<{ score: number; mapRank: number | null; overallRank: number | null } | null>(
+    null
+  );
+  const [respawnToken, setRespawnToken] = useState(0);
 
   useEffect(() => {
     const saved = localStorage.getItem("frog_nickname");
@@ -34,6 +38,21 @@ function App() {
   );
 
   const handleHit = useCallback(() => {}, []);
+  const handleDeath = useCallback((summary: { score: number; mapRank: number | null; overallRank: number | null }) => {
+    setDeathInfo({
+      score: summary.score ?? 0,
+      mapRank: summary.mapRank ?? null,
+      overallRank: summary.overallRank ?? null
+    });
+    setHealth(0);
+  }, []);
+
+  const handleRespawn = useCallback(() => {
+    setDeathInfo(null);
+    setRespawnToken((token) => token + 1);
+    setHealth(5);
+    setStage("tadpole");
+  }, []);
 
   const getApiBase = () => {
     const explicit = (import.meta.env.VITE_API_URL as string | undefined) || "";
@@ -95,6 +114,8 @@ function App() {
         onStageChange={setStage}
         onHealthChange={setHealth}
         onScoresChange={setScores}
+        onDeath={handleDeath}
+        respawnToken={respawnToken}
       />
       <div className="hud-hearts" aria-label="health">
         {"\u2665".repeat(Math.max(0, Math.min(health, 5))).padEnd(5, "\u2661")}
@@ -123,6 +144,41 @@ function App() {
           </div>
         ))}
       </div>
+
+      {deathInfo ? (
+        <div className="modal-backdrop">
+          <div className="modal death-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>체력이 0이 되었어요</h2>
+                <div className="modal-subtitle">다시 시작할까요?</div>
+              </div>
+            </div>
+            <div className="death-stats">
+              <div className="death-stat">
+                <div className="death-label">이번 점수</div>
+                <div className="death-value">{deathInfo.score}</div>
+              </div>
+              <div className="death-stat">
+                <div className="death-label">현재 맵 등수</div>
+                <div className="death-value">#{deathInfo.mapRank ?? "?"}</div>
+              </div>
+              <div className="death-stat">
+                <div className="death-label">전체 누적 등수</div>
+                <div className="death-value">#{deathInfo.overallRank ?? "?"}</div>
+              </div>
+            </div>
+            <div className="death-actions">
+              <button type="button" className="primary-button" onClick={handleRespawn}>
+                다시 할래요
+              </button>
+              <button type="button" className="ghost-button" onClick={() => setDeathInfo(null)}>
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {isHighscoreOpen ? (
         <div className="modal-backdrop" onClick={closeHighscores}>

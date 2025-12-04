@@ -12,6 +12,8 @@ type FrogGameProps = {
   onStageChange?: (stage: Stage) => void;
   onHealthChange?: (hp: number) => void;
   onScoresChange?: (scores: { id: string; nickname: string; score: number; isSelf: boolean }[]) => void;
+  onDeath?: (summary: { score: number; mapRank: number | null; overallRank: number | null }) => void;
+  respawnToken?: number;
 };
 
 type InputState = {
@@ -36,14 +38,16 @@ type ServerMessage =
       payload: { id: string; x: number; y: number; stage: Stage; hp: number; score: number; color?: number };
     }
   | { type: "player:attack"; payload: { id: string; heading?: { x: number; y: number } } }
-  | { type: "player:left"; payload: { id: string } };
+  | { type: "player:left"; payload: { id: string } }
+  | { type: "player:died"; payload: { score: number; mapRank?: number | null; overallRank?: number | null } };
 
 type ClientMessage =
   | { type: "player:join"; payload: { x: number; y: number; stage: Stage; nickname: string } }
   | { type: "player:update"; payload: StageUpdate }
   | { type: "player:hit"; payload: { targetId: string } }
   | { type: "food:eat" }
-  | { type: "player:attack"; payload: { heading: { x: number; y: number } } };
+  | { type: "player:attack"; payload: { heading: { x: number; y: number } } }
+  | { type: "player:respawn"; payload: { x: number; y: number; stage: Stage } };
 
 const ATTACK_DURATION_MS = 220;
 const ATTACK_COOLDOWN_MS = 380;
@@ -56,12 +60,21 @@ const createInputState = (): InputState => ({
   attack: false
 });
 
-const tadpoleSpeed = 0.0028;
-const frogSpeed = 0.0042;
+const tadpoleSpeed = 0.00441;
+const frogSpeed = 0.0032;
 const FOOD_COUNT = 5;
 const FOOD_RADIUS = 10;
 
-const FrogGame = ({ stage, onHit, nickname, onStageChange, onHealthChange, onScoresChange }: FrogGameProps): JSX.Element => {
+const FrogGame = ({
+  stage,
+  onHit,
+  nickname,
+  onStageChange,
+  onHealthChange,
+  onScoresChange,
+  onDeath,
+  respawnToken
+}: FrogGameProps): JSX.Element => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const appRef = useRef<Application | null>(null);
   const engineRef = useRef<Engine | null>(null);
@@ -110,6 +123,10 @@ const FrogGame = ({ stage, onHit, nickname, onStageChange, onHealthChange, onSco
   const scoresRef = useRef<Map<string, { id: string; nickname: string; score: number }>>(new Map());
   const lastSelfStageRendered = useRef<Stage>(stage);
   const selfColorRef = useRef<number>(0x7fff38);
+  const canvasSizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
+  const isDeadRef = useRef<boolean>(false);
+  const sendMessageRef = useRef<(message: ClientMessage) => void>(() => {});
+  const drawStageSpriteRef = useRef<(sprite: Graphics, currentStage: Stage, baseColor: number) => void>(() => {});
 
   stageRef.current = stage;
   nicknameRef.current = nickname;
@@ -121,7 +138,8 @@ const FrogGame = ({ stage, onHit, nickname, onStageChange, onHealthChange, onSco
       height: Math.max(window.innerHeight, 480)
     });
     const { width: CANVAS_WIDTH, height: CANVAS_HEIGHT } = getCanvasSize();
-    const WATER_SURFACE = CANVAS_HEIGHT * 0.42;
+    canvasSizeRef.current = { width: CANVAS_WIDTH, height: CANVAS_HEIGHT };
+    const WATER_SURFACE = 0;
     const WATER_FLOOR = CANVAS_HEIGHT - 32;
 
     const container = containerRef.current;
@@ -166,21 +184,33 @@ const FrogGame = ({ stage, onHit, nickname, onStageChange, onHealthChange, onSco
 
     const water = new Graphics();
     water.beginFill(0x0a5c9e, 0.92);
-    water.drawRect(0, WATER_SURFACE, CANVAS_WIDTH, CANVAS_HEIGHT - WATER_SURFACE);
+    water.drawRect(0, WATER_SURFACE, CANVAS_WIDTH, CANVAS_HEIGHT);
     water.endFill();
     stageContainer.addChild(water);
 
-    const land = new Graphics();
-    land.beginFill(0x3b6e22, 1);
-    land.drawRect(0, 0, CANVAS_WIDTH, WATER_SURFACE);
-    land.endFill();
-    stageContainer.addChild(land);
+    const createLilypad = (x: number, y: number, radius: number) => {
+      const lilypad = new Graphics();
+      lilypad.beginFill(0x70c048, 0.96);
+      lilypad.drawCircle(0, 0, radius);
+      lilypad.endFill();
+      lilypad.beginFill(0x0a5c9e, 1);
+      lilypad.moveTo(0, 0);
+      lilypad.arc(0, 0, radius * 0.9, -0.3, 0.3);
+      lilypad.lineTo(0, 0);
+      lilypad.endFill();
+      lilypad.position.set(x, y);
+      stageContainer.addChild(lilypad);
+    };
 
-    const lilypad = new Graphics();
-    lilypad.beginFill(0x70c048, 1);
-    lilypad.drawCircle(CANVAS_WIDTH * 0.65, WATER_SURFACE + 60, 48);
-    lilypad.endFill();
-    stageContainer.addChild(lilypad);
+    const LILYPADS = [
+      { x: CANVAS_WIDTH * 0.18, y: CANVAS_HEIGHT * 0.28, r: 44 },
+      { x: CANVAS_WIDTH * 0.42, y: CANVAS_HEIGHT * 0.2, r: 36 },
+      { x: CANVAS_WIDTH * 0.68, y: CANVAS_HEIGHT * 0.26, r: 46 },
+      { x: CANVAS_WIDTH * 0.22, y: CANVAS_HEIGHT * 0.62, r: 52 },
+      { x: CANVAS_WIDTH * 0.52, y: CANVAS_HEIGHT * 0.58, r: 38 },
+      { x: CANVAS_WIDTH * 0.82, y: CANVAS_HEIGHT * 0.64, r: 48 }
+    ];
+    LILYPADS.forEach((pad) => createLilypad(pad.x, pad.y, pad.r));
 
     const drawStageSprite = (sprite: Graphics, currentStage: Stage, baseColor: number) => {
       sprite.clear();
@@ -214,6 +244,7 @@ const FrogGame = ({ stage, onHit, nickname, onStageChange, onHealthChange, onSco
         sprite.endFill();
       }
     };
+    drawStageSpriteRef.current = drawStageSprite;
 
     const frogSprite = new Graphics();
     drawStageSprite(frogSprite, stageRef.current, selfColorRef.current);
@@ -402,6 +433,17 @@ const FrogGame = ({ stage, onHit, nickname, onStageChange, onHealthChange, onSco
       if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return;
       socketRef.current.send(JSON.stringify(message));
     };
+    sendMessageRef.current = sendMessage;
+
+    const emitLocalDeath = (scoreValue: number) => {
+      isDeadRef.current = true;
+      onHealthChange?.(0);
+      const allScores = Array.from(scoresRef.current.values()).map((entry) => entry.score ?? 0);
+      allScores.push(scoreValue);
+      allScores.sort((a, b) => b - a);
+      const mapRank = allScores.findIndex((value) => value <= scoreValue) + 1 || 1;
+      onDeath?.({ score: scoreValue, mapRank, overallRank: null });
+    };
 
     const emitScores = () => {
       if (!onScoresChange) return;
@@ -436,6 +478,11 @@ const FrogGame = ({ stage, onHit, nickname, onStageChange, onHealthChange, onSco
               if (id === selfIdRef.current) {
                 selfHealthRef.current = s.hp ?? 5;
                 onHealthChange?.(selfHealthRef.current);
+                if ((s.hp ?? 5) <= 0 && !isDeadRef.current) {
+                  emitLocalDeath(s.score ?? 0);
+                } else {
+                  isDeadRef.current = (s.hp ?? 5) <= 0;
+                }
                 if (s.stage && s.stage !== stageRef.current) {
                   stageRef.current = s.stage;
                   onStageChange?.(s.stage);
@@ -473,6 +520,11 @@ const FrogGame = ({ stage, onHit, nickname, onStageChange, onHealthChange, onSco
             if (parsed.payload.id === selfIdRef.current) {
               selfHealthRef.current = parsed.payload.hp ?? selfHealthRef.current;
               onHealthChange?.(selfHealthRef.current);
+              if ((parsed.payload.hp ?? 0) <= 0 && !isDeadRef.current) {
+                emitLocalDeath(parsed.payload.score ?? scoresRef.current.get(parsed.payload.id)?.score ?? 0);
+              } else {
+                isDeadRef.current = (parsed.payload.hp ?? 0) <= 0;
+              }
               if (parsed.payload.stage && parsed.payload.stage !== stageRef.current) {
                 stageRef.current = parsed.payload.stage;
                 onStageChange?.(parsed.payload.stage);
@@ -508,6 +560,16 @@ const FrogGame = ({ stage, onHit, nickname, onStageChange, onHealthChange, onSco
               score: parsed.payload.score ?? (scoresRef.current.get(parsed.payload.id)?.score ?? 0)
             });
             emitScores();
+            break;
+          }
+          case "player:died": {
+            isDeadRef.current = true;
+            onHealthChange?.(0);
+            onDeath?.({
+              score: parsed.payload.score ?? 0,
+              mapRank: parsed.payload.mapRank ?? null,
+              overallRank: parsed.payload.overallRank ?? null
+            });
             break;
           }
           case "player:attack": {
@@ -566,6 +628,25 @@ const FrogGame = ({ stage, onHit, nickname, onStageChange, onHealthChange, onSco
           x: body.velocity.x,
           y: Math.min(body.velocity.y, 0)
         });
+      }
+    };
+
+    const enforceLilypadForTadpole = () => {
+      if (stageRef.current !== "tadpole") return;
+      const body = frogBodyRef.current;
+      if (!body) return;
+      const selfRadius = 18;
+      for (const pad of LILYPADS) {
+        const dx = body.position.x - pad.x;
+        const dy = body.position.y - pad.y;
+        const dist = Math.hypot(dx, dy);
+        const minDist = pad.r + selfRadius;
+        if (dist > 0 && dist < minDist) {
+          const nx = dx / dist;
+          const ny = dy / dist;
+          Body.setPosition(body, { x: pad.x + nx * minDist, y: pad.y + ny * minDist });
+          Body.setVelocity(body, { x: body.velocity.x * 0.5, y: body.velocity.y * 0.5 });
+        }
       }
     };
 
@@ -657,25 +738,33 @@ const FrogGame = ({ stage, onHit, nickname, onStageChange, onHealthChange, onSco
       if (input.left) x -= 1;
       if (input.right) x += 1;
 
-      // Prevent movement while actively attacking
-      if (!attackStateRef.current.isAttacking && (x !== 0 || y !== 0)) {
-        const normalised = Vector.normalise(Vector.create(x, y));
-        const forceScale = stageRef.current === "frog" ? frogSpeed : tadpoleSpeed;
-        Body.applyForce(frogBody, frogBody.position, {
-          x: normalised.x * forceScale,
-          y: normalised.y * forceScale
-        });
-        updateHeading(normalised.x, normalised.y);
-      }
+      if (!isDeadRef.current) {
+        // Prevent movement while actively attacking
+        if (!attackStateRef.current.isAttacking && (x !== 0 || y !== 0)) {
+          const normalised = Vector.normalise(Vector.create(x, y));
+          const forceScale = stageRef.current === "frog" ? frogSpeed : tadpoleSpeed;
+          Body.applyForce(frogBody, frogBody.position, {
+            x: normalised.x * forceScale,
+            y: normalised.y * forceScale
+          });
+          updateHeading(normalised.x, normalised.y);
+        }
 
-      const maxVelocity = stageRef.current === "frog" ? 6.4 : 4.2;
-      if (Vector.magnitude(frogBody.velocity) > maxVelocity) {
-        const limited = Vector.mult(Vector.normalise(frogBody.velocity), maxVelocity);
-        Body.setVelocity(frogBody, limited);
-      }
+        const maxVelocity = stageRef.current === "frog" ? 6.4 : 4.2;
+        if (Vector.magnitude(frogBody.velocity) > maxVelocity) {
+          const limited = Vector.mult(Vector.normalise(frogBody.velocity), maxVelocity);
+          Body.setVelocity(frogBody, limited);
+        }
 
-      if (stageRef.current === "tadpole") {
-        clampToWater();
+        if (stageRef.current === "tadpole") {
+          clampToWater();
+          enforceLilypadForTadpole();
+        }
+      } else {
+        Body.setVelocity(frogBody, { x: 0, y: 0 });
+        Body.setAngularVelocity(frogBody, 0);
+        attackStateRef.current.isAttacking = false;
+        if (tongueSpriteRef.current) tongueSpriteRef.current.visible = false;
       }
 
       frogSprite.position.set(frogBody.position.x, frogBody.position.y);
@@ -686,32 +775,34 @@ const FrogGame = ({ stage, onHit, nickname, onStageChange, onHealthChange, onSco
       frogSprite.rotation = Math.atan2(frogBody.velocity.y, frogBody.velocity.x) * 0.25;
 
       const now = performance.now();
-      handleAttack(now);
+      if (!isDeadRef.current) {
+        handleAttack(now);
 
-      // Body collision with foods
-      for (let i = 0; i < foodsRef.current.length; i++) {
-        const food = foodsRef.current[i];
-        const dist = Math.hypot(frogBody.position.x - food.sprite.position.x, frogBody.position.y - food.sprite.position.y);
-        if (dist < food.radius + 18) {
-          sendMessage({ type: "food:eat" });
-          const newPos = randomFoodPosition();
-          food.sprite.position.set(newPos.x, newPos.y);
+        // Body collision with foods
+        for (let i = 0; i < foodsRef.current.length; i++) {
+          const food = foodsRef.current[i];
+          const dist = Math.hypot(frogBody.position.x - food.sprite.position.x, frogBody.position.y - food.sprite.position.y);
+          if (dist < food.radius + 18) {
+            sendMessage({ type: "food:eat" });
+            const newPos = randomFoodPosition();
+            food.sprite.position.set(newPos.x, newPos.y);
+          }
         }
-      }
 
-      // Throttle network updates to ~20Hz
-      if (socketRef.current && now - lastSentRef.current > 50 && socketRef.current.readyState === WebSocket.OPEN) {
-        socketRef.current.send(
-          JSON.stringify({
-            type: "player:update",
-            payload: {
-              x: frogBody.position.x,
-              y: frogBody.position.y,
-              stage: stageRef.current
-            }
-          } as ClientMessage)
-        );
-        lastSentRef.current = now;
+        // Throttle network updates to ~20Hz
+        if (socketRef.current && now - lastSentRef.current > 50 && socketRef.current.readyState === WebSocket.OPEN) {
+          socketRef.current.send(
+            JSON.stringify({
+              type: "player:update",
+              payload: {
+                x: frogBody.position.x,
+                y: frogBody.position.y,
+                stage: stageRef.current
+              }
+            } as ClientMessage)
+          );
+          lastSentRef.current = now;
+        }
       }
 
       // Refresh self sprite if stage changed (e.g., growth/shrink)
@@ -794,7 +885,32 @@ const FrogGame = ({ stage, onHit, nickname, onStageChange, onHealthChange, onSco
       engineRef.current = null;
       runnerRef.current = null;
     };
-  }, [nickname, onHealthChange, onStageChange, onScoresChange]);
+  }, [nickname, onHealthChange, onStageChange, onScoresChange, onDeath]);
+
+  useEffect(() => {
+    if (!respawnToken) return;
+    const frogBody = frogBodyRef.current;
+    const frogSprite = frogSpriteRef.current;
+    if (!frogBody || !frogSprite) return;
+    const { width, height } = canvasSizeRef.current;
+    const spawn = {
+      x: Math.random() * Math.max(200, width - 160) + 80,
+      y: Math.random() * Math.max(160, height - 160) + 80
+    };
+    Body.setPosition(frogBody, spawn);
+    Body.setVelocity(frogBody, { x: 0, y: 0 });
+    stageRef.current = "tadpole";
+    lastSelfStageRendered.current = "tadpole";
+    drawStageSpriteRef.current(frogSprite, "tadpole", selfColorRef.current);
+    selfHealthRef.current = 5;
+    isDeadRef.current = false;
+    attackStateRef.current.isAttacking = false;
+    attackStateRef.current.queued = false;
+    attackStateRef.current.hitSent = false;
+    onHealthChange?.(5);
+    onStageChange?.("tadpole");
+    sendMessageRef.current({ type: "player:respawn", payload: { x: spawn.x, y: spawn.y, stage: "tadpole" } });
+  }, [respawnToken, onHealthChange, onStageChange]);
 
   return <div ref={containerRef} />;
 };

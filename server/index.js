@@ -73,6 +73,23 @@ const recordHighScore = async (nickname, score) => {
   }
 };
 
+const getOverallRank = async (score) => {
+  if (!pool || typeof score !== "number" || Number.isNaN(score)) return null;
+  try {
+    const [rows] = await pool.execute("SELECT COUNT(*) AS higher FROM scores WHERE best_score > ?", [score]);
+    const higher = Number(rows?.[0]?.higher ?? 0);
+    return higher + 1;
+  } catch (error) {
+    console.warn("Failed to compute overall rank", error);
+    return null;
+  }
+};
+
+const randomSpawn = () => ({
+  x: Math.random() * 480 + 80,
+  y: Math.random() * 320 + 80
+});
+
 initDb().catch((error) => {
   console.warn("MySQL init failed; score persistence disabled", error);
 });
@@ -222,9 +239,12 @@ wss.on("connection", (socket, request) => {
         const died = nextHp === 0 && prevHp > 0;
         const nextStage = died ? "tadpole" : target.stage;
         const deathScore = target.score ?? 0;
+        const currentScores = Array.from(players.entries())
+          .map(([id, playerState]) => (id === targetId ? deathScore : playerState.score ?? 0))
+          .filter((value) => Number.isFinite(value));
         const updated = {
           ...target,
-          hp: died ? 5 : nextHp,
+          hp: died ? 0 : nextHp,
           stage: nextStage,
           score: died ? 0 : target.score ?? 0
         };
@@ -245,6 +265,26 @@ wss.on("connection", (socket, request) => {
         // Increment attacker score only on kill
         if (died) {
           recordHighScore(target.nickname, deathScore);
+          const sortedScores = currentScores.slice().sort((a, b) => b - a);
+          const mapRank = sortedScores.findIndex((value) => value <= deathScore) + 1 || 1;
+          getOverallRank(deathScore).then((overallRank) => {
+            try {
+              const victimSocket = Array.from(wss.clients).find(
+                (client) => client.readyState === WebSocket.OPEN && client.clientId === targetId
+              );
+              if (victimSocket) {
+                victimSocket.send(
+                  JSON.stringify({
+                    type: "player:died",
+                    payload: { score: deathScore, mapRank, overallRank }
+                  })
+                );
+              }
+            } catch (error) {
+              console.warn("Failed to send death summary", error);
+            }
+          });
+
           const attacker = players.get(clientId);
           if (attacker) {
             const nextScore = (attacker.score ?? 0) + 50;
@@ -268,6 +308,43 @@ wss.on("connection", (socket, request) => {
       }
       case "player:attack": {
         broadcast({ type: "player:attack", payload: { id: clientId, heading: parsed.payload?.heading } }, clientId);
+        break;
+      }
+      case "player:respawn": {
+        const prev = players.get(clientId);
+        const spawn = {
+          x:
+            typeof parsed.payload?.x === "number" && Number.isFinite(parsed.payload.x)
+              ? parsed.payload.x
+              : randomSpawn().x,
+          y:
+            typeof parsed.payload?.y === "number" && Number.isFinite(parsed.payload.y)
+              ? parsed.payload.y
+              : randomSpawn().y
+        };
+        const next = {
+          ...(prev || {}),
+          x: spawn.x,
+          y: spawn.y,
+          hp: 5,
+          stage: "tadpole",
+          score: 0,
+          color: prev?.color ?? palette[colorIndex++ % palette.length],
+          nickname: prev?.nickname ?? "Player"
+        };
+        players.set(clientId, next);
+        broadcast({
+          type: "player:updated",
+          payload: {
+            id: clientId,
+            x: next.x,
+            y: next.y,
+            stage: next.stage,
+            hp: next.hp,
+            score: next.score ?? 0,
+            color: next.color
+          }
+        });
         break;
       }
       default:
