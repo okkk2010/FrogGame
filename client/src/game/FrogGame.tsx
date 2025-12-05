@@ -51,6 +51,8 @@ type ClientMessage =
 
 const ATTACK_DURATION_MS = 220;
 const ATTACK_COOLDOWN_MS = 380;
+const BASE_CANVAS_WIDTH = 1280;
+const BASE_CANVAS_HEIGHT = 720;
 
 const createInputState = (): InputState => ({
   up: false,
@@ -133,11 +135,8 @@ const FrogGame = ({
   onHitRef.current = onHit;
 
   useEffect(() => {
-    const getCanvasSize = () => ({
-      width: Math.max(window.innerWidth, 640),
-      height: Math.max(window.innerHeight, 480)
-    });
-    const { width: CANVAS_WIDTH, height: CANVAS_HEIGHT } = getCanvasSize();
+    const CANVAS_WIDTH = BASE_CANVAS_WIDTH;
+    const CANVAS_HEIGHT = BASE_CANVAS_HEIGHT;
     canvasSizeRef.current = { width: CANVAS_WIDTH, height: CANVAS_HEIGHT };
     const WATER_SURFACE = 0;
     const WATER_FLOOR = CANVAS_HEIGHT - 32;
@@ -155,7 +154,15 @@ const FrogGame = ({
     });
 
     appRef.current = app;
-    container.appendChild(app.view as HTMLCanvasElement);
+    const canvas = app.view as HTMLCanvasElement;
+    container.appendChild(canvas);
+
+    const applyCanvasScale = () => {
+      const scale = Math.min(window.innerWidth / CANVAS_WIDTH, window.innerHeight / CANVAS_HEIGHT);
+      canvas.style.width = `${CANVAS_WIDTH * scale}px`;
+      canvas.style.height = `${CANVAS_HEIGHT * scale}px`;
+    };
+    applyCanvasScale();
 
     const engine = Engine.create({
       gravity: { x: 0, y: 0 }
@@ -402,6 +409,7 @@ const FrogGame = ({
 
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("resize", applyCanvasScale);
 
     // WebSocket wiring via env-aware helper
     const socketUrl = getSocketUrl();
@@ -822,6 +830,7 @@ const FrogGame = ({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("resize", applyCanvasScale);
       app.ticker.remove(tick);
 
       // Close socket early to stop outbound sends
@@ -897,7 +906,7 @@ const FrogGame = ({
     sendMessageRef.current({ type: "player:respawn", payload: { x: spawn.x, y: spawn.y, stage: "tadpole" } });
   }, [respawnToken, onHealthChange, onStageChange]);
 
-  return <div ref={containerRef} />;
+  return <div ref={containerRef} className="game-stage" />;
 };
 
 export default FrogGame;
